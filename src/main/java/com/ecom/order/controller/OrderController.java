@@ -35,7 +35,7 @@ import java.util.UUID;
  * Payment, and Fulfillment services through events.
  */
 @RestController
-@RequestMapping("/v1/order")
+@RequestMapping("/api/v1/order")
 @Tag(name = "Orders", description = "Order management and tracking endpoints")
 @SecurityRequirement(name = "bearerAuth")
 public class OrderController {
