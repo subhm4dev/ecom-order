@@ -1,10 +1,28 @@
 package com.ecom.order.controller;
 
+import com.ecom.order.entity.Order;
+import com.ecom.order.model.request.CancelOrderRequest;
+import com.ecom.order.model.request.CreateOrderRequest;
+import com.ecom.order.model.request.ReturnOrderRequest;
+import com.ecom.order.model.request.UpdateOrderStatusRequest;
+import com.ecom.order.model.response.OrderResponse;
+import com.ecom.order.model.response.OrderSummaryResponse;
+import com.ecom.order.security.JwtAuthenticationToken;
+import com.ecom.order.service.OrderService;
+import com.ecom.response.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -15,30 +33,16 @@ import java.util.UUID;
  * <p>This controller manages order lifecycle from creation to delivery. It tracks
  * order status, manages order history, and coordinates with fulfillment services
  * for order processing.
- * 
- * <p>Why we need these APIs:
- * <ul>
- *   <li><b>Order Management:</b> Creates and tracks orders from checkout completion
- *       through delivery. Central record of all customer purchases.</li>
- *   <li><b>Order History:</b> Provides customers and sellers with order history,
- *       enabling order tracking, returns, and reordering.</li>
- *   <li><b>Status Tracking:</b> Tracks order status (PLACED, CONFIRMED, PROCESSING,
- *       SHIPPED, DELIVERED, CANCELLED) enabling real-time order visibility.</li>
- *   <li><b>Fulfillment Integration:</b> Publishes order events to Kafka for fulfillment
- *       service to process and assign delivery drivers.</li>
- *   <li><b>Returns and Cancellations:</b> Handles order cancellations and return requests,
- *       coordinating with Inventory and Payment services for reversals.</li>
- * </ul>
- * 
- * <p>Orders are immutable records once placed (with exceptions for cancellations).
- * Status updates are logged for audit trail. Orders integrate with Inventory,
- * Payment, and Fulfillment services through events.
  */
 @RestController
 @RequestMapping("/api/v1/order")
 @Tag(name = "Orders", description = "Order management and tracking endpoints")
 @SecurityRequirement(name = "bearerAuth")
+@RequiredArgsConstructor
+@Slf4j
 public class OrderController {
+    
+    private final OrderService orderService;
 
     /**
      * Create order
@@ -46,14 +50,7 @@ public class OrderController {
      * <p>Creates a new order from checkout data. This endpoint is typically called
      * by Checkout service after successful payment and inventory reservation.
      * 
-     * <p>Order creation triggers:
-     * <ul>
-     *   <li>OrderCreated event to Kafka (for fulfillment service)</li>
-     *   <li>Order confirmation to Notification service</li>
-     * </ul>
-     * 
-     * <p>This endpoint may be called by Checkout service (service-to-service) or
-     * directly by authenticated users. Access control depends on implementation.
+     * <p>RBAC: CUSTOMER role required (or service-to-service call).
      */
     @PostMapping
     @Operation(
@@ -61,35 +58,28 @@ public class OrderController {
         description = "Creates a new order from checkout data. Triggers OrderCreated event to Kafka."
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> createOrder(@Valid @RequestBody Object orderRequest) {
-        // TODO: Implement order creation logic
-        // 1. Extract userId from X-User-Id header (or from orderRequest if service-to-service)
-        // 2. Extract tenantId from X-Tenant-Id header
-        // 3. Validate orderRequest DTO:
-        //     - Cart items (productId, quantity, price)
-        //     - Shipping address
-        //     - Payment information
-        //     - Totals (subtotal, tax, shipping, discounts, total)
-        // 4. Create Order entity with status PLACED
-        // 5. Create OrderItem entities for each cart item
-        // 6. Persist order and items to database
-        // 7. Publish OrderCreated event to Kafka
-        // 8. Trigger order confirmation notification (via Notification service or event)
-        // 9. Return order response with orderId (201 Created)
-        return ResponseEntity.ok(null);
+    @PreAuthorize("hasRole('CUSTOMER') or hasRole('ADMIN') or hasRole('SELLER')")
+    public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
+            @Valid @RequestBody CreateOrderRequest request,
+            Authentication authentication) {
+        
+        log.info("Creating order");
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        
+        OrderResponse response = orderService.createOrder(userId, tenantId, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+            .body(ApiResponse.success(response, "Order created successfully"));
     }
 
     /**
      * Get order by ID
      * 
      * <p>Retrieves detailed order information including items, status, shipping address,
-     * payment information, and tracking details. Used for order detail pages and
-     * order management interfaces.
+     * payment information, and tracking details.
      * 
-     * <p>Access control: Users can view their own orders. Admins/Sellers can view
-     * orders for their tenants.
-     * 
-     * <p>This endpoint is protected and requires authentication.
+     * <p>RBAC: Users can view their own orders. Admins/Sellers/Staff can view any order.
      */
     @GetMapping("/{orderId}")
     @Operation(
@@ -97,29 +87,27 @@ public class OrderController {
         description = "Retrieves detailed order information including items, status, and tracking"
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> getOrder(@PathVariable UUID orderId) {
-        // TODO: Implement order retrieval logic
-        // 1. Extract userId from X-User-Id header
-        // 2. Extract tenantId from X-Tenant-Id header
-        // 3. Find Order entity by orderId
-        // 4. Verify authorization: user can view own orders, admins can view tenant orders
-        // 5. Load OrderItem entities
-        // 6. Enrich with current product details from Catalog service (in case products changed)
-        // 7. Include shipping address from Address Book service
-        // 8. Include payment status from Payment service
-        // 9. Include tracking information from Fulfillment service (if available)
-        // 10. Return order response with all details
-        // 11. Handle 404 if order not found, 403 if unauthorized
-        return ResponseEntity.ok(null);
+    @PreAuthorize("hasRole('ADMIN') or hasRole('SELLER') or hasRole('STAFF') or @orderService.canAccessOrder(authentication.principal, #orderId, authentication.authorities)")
+    public ResponseEntity<ApiResponse<OrderResponse>> getOrder(
+            @PathVariable UUID orderId,
+            Authentication authentication) {
+        
+        log.info("Getting order: orderId={}", orderId);
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        java.util.List<String> roles = getRolesFromAuthentication(authentication);
+        
+        OrderResponse response = orderService.getOrderById(orderId, userId, tenantId, roles);
+        return ResponseEntity.ok(ApiResponse.success(response, "Order retrieved successfully"));
     }
 
     /**
      * Get user's order history
      * 
-     * <p>Returns paginated list of orders for the authenticated user. Used for
-     * order history pages and account dashboards.
+     * <p>Returns paginated list of orders for the authenticated user.
      * 
-     * <p>This endpoint is protected and requires authentication.
+     * <p>RBAC: CUSTOMER role required (users view own orders).
      */
     @GetMapping
     @Operation(
@@ -127,36 +115,29 @@ public class OrderController {
         description = "Returns paginated list of orders for the authenticated user"
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> getOrderHistory(
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<ApiResponse<Page<OrderSummaryResponse>>> getOrderHistory(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String status) {
-        // TODO: Implement order history retrieval logic
-        // 1. Extract userId from X-User-Id header
-        // 2. Extract tenantId from X-Tenant-Id header
-        // 3. Build query criteria: filter by userId, tenantId, and status if provided
-        // 4. Query Order repository with pagination
-        // 5. Return paginated list of orders (summary view, not full details)
-        return ResponseEntity.ok(null);
+            @RequestParam(required = false) Order.OrderStatus status,
+            Authentication authentication) {
+        
+        log.info("Getting order history: page={}, size={}, status={}", page, size, status);
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        
+        Pageable pageable = PageRequest.of(page, size);
+        Page<OrderSummaryResponse> response = orderService.getOrderHistory(userId, tenantId, status, pageable);
+        return ResponseEntity.ok(ApiResponse.success(response, "Order history retrieved successfully"));
     }
 
     /**
      * Update order status
      * 
-     * <p>Updates order status (typically called by Fulfillment service or admin).
-     * Status transitions follow business rules:
-     * <ul>
-     *   <li>PLACED → CONFIRMED (after verification)</li>
-     *   <li>CONFIRMED → PROCESSING (when fulfillment starts)</li>
-     *   <li>PROCESSING → SHIPPED (when order ships)</li>
-     *   <li>SHIPPED → DELIVERED (when delivered)</li>
-     *   <li>Any → CANCELLED (if cancelled)</li>
-     * </ul>
+     * <p>Updates order status. Typically accessed by Fulfillment service or Admin users.
      * 
-     * <p>Status updates trigger events for notifications and other services.
-     * 
-     * <p>This endpoint is protected. Typically accessed by Fulfillment service
-     * or Admin users.
+     * <p>RBAC: ADMIN, SELLER, or STAFF role required.
      */
     @PutMapping("/{orderId}/status")
     @Operation(
@@ -164,37 +145,28 @@ public class OrderController {
         description = "Updates order status. Used by fulfillment service or admins. Triggers status update events."
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> updateOrderStatus(
+    @PreAuthorize("hasRole('ADMIN') or hasRole('SELLER') or hasRole('STAFF')")
+    public ResponseEntity<ApiResponse<OrderResponse>> updateOrderStatus(
             @PathVariable UUID orderId,
-            @Valid @RequestBody Object statusUpdateRequest) {
-        // TODO: Implement order status update logic
-        // 1. Extract userId from X-User-Id header (for admin verification)
-        // 2. Validate statusUpdateRequest DTO (newStatus, reason if applicable)
-        // 3. Find Order entity by orderId
-        // 4. Verify valid status transition (business rules)
-        // 5. Update order status
-        // 6. Create OrderStatusHistory record for audit trail
-        // 7. Persist changes
-        // 8. Publish OrderStatusUpdated event to Kafka
-        // 9. Trigger status notification (via Notification service)
-        // 10. Return updated order response
-        // 11. Handle BusinessException for INVALID_STATUS_TRANSITION
-        return ResponseEntity.ok(null);
+            @Valid @RequestBody UpdateOrderStatusRequest request,
+            Authentication authentication) {
+        
+        log.info("Updating order status: orderId={}, status={}", orderId, request.status());
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        java.util.List<String> roles = getRolesFromAuthentication(authentication);
+        
+        OrderResponse response = orderService.updateOrderStatus(orderId, userId, tenantId, roles, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Order status updated successfully"));
     }
 
     /**
      * Cancel order
      * 
-     * <p>Cancels an order that hasn't been shipped yet. Triggers:
-     * <ul>
-     *   <li>Inventory release (restore reserved stock)</li>
-     *   <li>Payment refund</li>
-     *   <li>Order cancellation notification</li>
-     * </ul>
+     * <p>Cancels an order that hasn't been shipped yet.
      * 
-     * <p>Access control: Users can cancel their own orders. Admins can cancel any order.
-     * 
-     * <p>This endpoint is protected and requires authentication.
+     * <p>RBAC: Users can cancel their own orders. Admins can cancel any order.
      */
     @PostMapping("/{orderId}/cancel")
     @Operation(
@@ -202,34 +174,28 @@ public class OrderController {
         description = "Cancels an order. Releases inventory, processes refund, and sends cancellation notification."
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> cancelOrder(
+    @PreAuthorize("hasRole('CUSTOMER') or hasRole('ADMIN') or hasRole('SELLER')")
+    public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(
             @PathVariable UUID orderId,
-            @Valid @RequestBody Object cancelRequest) {
-        // TODO: Implement order cancellation logic
-        // 1. Extract userId from X-User-Id header
-        // 2. Validate cancelRequest DTO (reason)
-        // 3. Find Order entity by orderId
-        // 4. Verify ownership or admin access
-        // 5. Verify order can be cancelled (status not SHIPPED or DELIVERED)
-        // 6. Update order status to CANCELLED
-        // 7. Release inventory reservation via Inventory service
-        // 8. Process refund via Payment service (full refund)
-        // 9. Create OrderStatusHistory record
-        // 10. Persist changes
-        // 11. Publish OrderCancelled event to Kafka
-        // 12. Trigger cancellation notification
-        // 13. Return cancellation confirmation
-        // 14. Handle BusinessException for ORDER_ALREADY_SHIPPED, ORDER_ALREADY_CANCELLED
-        return ResponseEntity.ok(null);
+            @Valid @RequestBody CancelOrderRequest request,
+            Authentication authentication) {
+        
+        log.info("Cancelling order: orderId={}", orderId);
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        java.util.List<String> roles = getRolesFromAuthentication(authentication);
+        
+        OrderResponse response = orderService.cancelOrder(orderId, userId, tenantId, roles, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Order cancelled successfully"));
     }
 
     /**
      * Request return for order
      * 
-     * <p>Initiates a return request for an order or order items. Used when customers
-     * want to return products. Returns must be approved before processing refund.
+     * <p>Initiates a return request for an order or order items.
      * 
-     * <p>This endpoint is protected and requires authentication.
+     * <p>RBAC: CUSTOMER role required (users can return their own orders).
      */
     @PostMapping("/{orderId}/return")
     @Operation(
@@ -237,23 +203,49 @@ public class OrderController {
         description = "Initiates a return request for order items. Requires approval before refund processing."
     )
     @SecurityRequirement(name = "bearerAuth")
-    public ResponseEntity<Object> requestReturn(
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<ApiResponse<OrderResponse>> requestReturn(
             @PathVariable UUID orderId,
-            @Valid @RequestBody Object returnRequest) {
-        // TODO: Implement return request logic
-        // 1. Extract userId from X-User-Id header
-        // 2. Validate returnRequest DTO (itemIds, quantities, reason)
-        // 3. Find Order entity by orderId
-        // 4. Verify ownership
-        // 5. Verify order is eligible for return (DELIVERED status, within return window)
-        // 6. Create ReturnRequest entity with status PENDING
-        // 7. Associate with order items
-        // 8. Persist return request
-        // 9. Publish ReturnRequested event to Kafka
-        // 10. Trigger return request notification (to seller/admin)
-        // 11. Return return request confirmation
-        // 12. Handle BusinessException for ORDER_NOT_ELIGIBLE_FOR_RETURN, RETURN_WINDOW_EXPIRED
-        return ResponseEntity.ok(null);
+            @Valid @RequestBody ReturnOrderRequest request,
+            Authentication authentication) {
+        
+        log.info("Requesting return for order: orderId={}", orderId);
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        
+        OrderResponse response = orderService.requestReturn(orderId, userId, tenantId, request);
+        return ResponseEntity.ok(ApiResponse.success(response, "Return requested successfully"));
+    }
+    
+    /**
+     * Extract user ID from JWT authentication token
+     */
+    private UUID getUserIdFromAuthentication(Authentication authentication) {
+        if (authentication instanceof JwtAuthenticationToken jwtToken) {
+            return UUID.fromString(jwtToken.getUserId());
+        }
+        throw new IllegalStateException("Invalid authentication token");
+    }
+    
+    /**
+     * Extract tenant ID from JWT authentication token
+     */
+    private UUID getTenantIdFromAuthentication(Authentication authentication) {
+        if (authentication instanceof JwtAuthenticationToken jwtToken) {
+            return UUID.fromString(jwtToken.getTenantId());
+        }
+        throw new IllegalStateException("Invalid authentication token");
+    }
+    
+    /**
+     * Extract roles from JWT authentication token
+     */
+    private java.util.List<String> getRolesFromAuthentication(Authentication authentication) {
+        if (authentication instanceof JwtAuthenticationToken jwtToken) {
+            return jwtToken.getRoles();
+        }
+        return java.util.Collections.emptyList();
     }
 }
 
