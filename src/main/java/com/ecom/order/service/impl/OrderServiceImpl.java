@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 /**
  * Order Service Implementation
  */
-@Service
+@Service("orderService")
 @RequiredArgsConstructor
 @Slf4j
 public class OrderServiceImpl implements OrderService {
@@ -531,6 +531,23 @@ public class OrderServiceImpl implements OrderService {
         );
     }
     
+    @Override
+    @Transactional(readOnly = true)
+    public OrderSummaryResponse findOrderByPaymentId(UUID paymentId, UUID userId, UUID tenantId) {
+        log.debug("Finding order by payment ID: paymentId={}, userId={}", paymentId, userId);
+        
+        Order order = orderRepository.findByPaymentIdAndUserIdAndTenantId(paymentId, userId, tenantId)
+            .orElse(null);
+        
+        if (order == null) {
+            log.debug("No order found with payment ID: paymentId={}, userId={}", paymentId, userId);
+            return null;
+        }
+        
+        log.info("Found order by payment ID: orderId={}, paymentId={}", order.getId(), paymentId);
+        return toSummaryResponse(order);
+    }
+    
     /**
      * Convert Order entity to OrderSummaryResponse DTO
      */
@@ -539,6 +556,7 @@ public class OrderServiceImpl implements OrderService {
             order.getId(),
             order.getOrderNumber(),
             order.getStatus(),
+            order.getPaymentId(),
             order.getTotal(),
             order.getCurrency(),
             order.getItems().size(),

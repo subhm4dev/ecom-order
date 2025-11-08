@@ -18,6 +18,9 @@ public record OrderSummaryResponse(
     
     Order.OrderStatus status,
     
+    @JsonProperty("payment_id")
+    UUID paymentId,
+    
     BigDecimal total,
     
     String currency,

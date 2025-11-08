@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -87,7 +88,7 @@ public class OrderController {
         description = "Retrieves detailed order information including items, status, and tracking"
     )
     @SecurityRequirement(name = "bearerAuth")
-    @PreAuthorize("hasRole('ADMIN') or hasRole('SELLER') or hasRole('STAFF') or @orderService.canAccessOrder(authentication.principal, #orderId, authentication.authorities)")
+    @PreAuthorize("hasRole('CUSTOMER') or hasRole('ADMIN') or hasRole('SELLER') or hasRole('STAFF')")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrder(
             @PathVariable UUID orderId,
             Authentication authentication) {
@@ -120,16 +121,65 @@ public class OrderController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) Order.OrderStatus status,
+            @RequestParam(required = false) String sort,
             Authentication authentication) {
         
-        log.info("Getting order history: page={}, size={}, status={}", page, size, status);
+        log.info("Getting order history: page={}, size={}, status={}, sort={}", page, size, status, sort);
         
         UUID userId = getUserIdFromAuthentication(authentication);
         UUID tenantId = getTenantIdFromAuthentication(authentication);
         
-        Pageable pageable = PageRequest.of(page, size);
+        // Parse sort parameter (format: "field,direction" e.g., "created_at,desc")
+        Pageable pageable;
+        if (sort != null && !sort.isEmpty()) {
+            String[] sortParts = sort.split(",");
+            if (sortParts.length == 2) {
+                String field = sortParts[0].trim();
+                Sort.Direction direction = sortParts[1].trim().equalsIgnoreCase("desc") 
+                    ? Sort.Direction.DESC 
+                    : Sort.Direction.ASC;
+                pageable = PageRequest.of(page, size, Sort.by(direction, field));
+            } else {
+                // Default to created_at desc if sort format is invalid
+                pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+            }
+        } else {
+            // Default to created_at desc if no sort specified
+            pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        }
+        
         Page<OrderSummaryResponse> response = orderService.getOrderHistory(userId, tenantId, status, pageable);
         return ResponseEntity.ok(ApiResponse.success(response, "Order history retrieved successfully"));
+    }
+
+    /**
+     * Find order by payment ID
+     * 
+     * <p>Finds an order by its payment ID. Used for idempotency checks in checkout service.
+     * 
+     * <p>RBAC: CUSTOMER role required (users can only find their own orders).
+     */
+    @GetMapping("/by-payment/{paymentId}")
+    @Operation(
+        summary = "Find order by payment ID",
+        description = "Finds an order by payment ID. Used for idempotency checks in checkout."
+    )
+    @SecurityRequirement(name = "bearerAuth")
+    @PreAuthorize("hasRole('CUSTOMER') or hasRole('ADMIN') or hasRole('SELLER') or hasRole('STAFF')")
+    public ResponseEntity<ApiResponse<OrderSummaryResponse>> findOrderByPaymentId(
+            @PathVariable UUID paymentId,
+            Authentication authentication) {
+        
+        log.info("Finding order by payment ID: paymentId={}", paymentId);
+        
+        UUID userId = getUserIdFromAuthentication(authentication);
+        UUID tenantId = getTenantIdFromAuthentication(authentication);
+        
+        OrderSummaryResponse response = orderService.findOrderByPaymentId(paymentId, userId, tenantId);
+        if (response == null) {
+            return ResponseEntity.ok(ApiResponse.success(null, "No order found with the given payment ID"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(response, "Order found successfully"));
     }
 
     /**

@@ -73,5 +73,11 @@ public interface OrderService {
      * Check if user can access order
      */
     boolean canAccessOrder(UUID currentUserId, UUID orderUserId, java.util.List<String> userRoles);
+    
+    /**
+     * Find order by payment ID
+     * Used for idempotency checks in checkout service
+     */
+    OrderSummaryResponse findOrderByPaymentId(UUID paymentId, UUID userId, UUID tenantId);
 }
 

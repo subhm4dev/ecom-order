@@ -37,5 +37,15 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
         @Param("status") Order.OrderStatus status,
         Pageable pageable
     );
+    
+    /**
+     * Find order by payment ID, user ID, and tenant ID
+     * Used for idempotency checks in checkout service
+     */
+    Optional<Order> findByPaymentIdAndUserIdAndTenantId(
+        UUID paymentId,
+        UUID userId,
+        UUID tenantId
+    );
 }
 

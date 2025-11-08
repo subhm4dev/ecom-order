@@ -20,7 +20,9 @@ import java.util.UUID;
     @Index(name = "idx_order_user_id", columnList = "user_id"),
     @Index(name = "idx_order_tenant_id", columnList = "tenant_id"),
     @Index(name = "idx_order_status", columnList = "status"),
-    @Index(name = "idx_order_created_at", columnList = "created_at")
+    @Index(name = "idx_order_created_at", columnList = "created_at"),
+    @Index(name = "idx_order_payment_id", columnList = "payment_id"),
+    @Index(name = "idx_order_payment_user_tenant", columnList = "payment_id, user_id, tenant_id")
 })
 @Data
 @Builder
